@@ -3,6 +3,8 @@ import { Check, ImagePlus, RotateCcw, Volume2, X } from 'lucide-react'
 import { detectObjects, loadModel } from '@/lib/detection'
 import type { Prediction } from '@/lib/detection'
 import { classifySubject, loadClip } from '@/lib/clip'
+import { recognizeCloud } from '@/lib/cloud'
+import { loadSettings } from '@/lib/settings'
 import { cutoutSubject } from '@/lib/bgremove'
 import { usePinyin } from '@/lib/pinyin'
 import {
@@ -30,6 +32,8 @@ interface SnapResult {
   picked: Prediction | null
   uncertain: boolean
   modelError: boolean
+  /** recognized by the cloud vision-LLM */
+  cloud: boolean
   word: string
   translation: string
 }
@@ -153,12 +157,28 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
         cropCenter(img) ??
         photoUrl
 
-      // ── stage 2: CLIP fine-grained classification on the crop ──
-      // runs in parallel with background removal
+      // ── stage 2: recognition — cloud vision-LLM primary (when an API key
+      // is configured), local CLIP as the seamless fallback ──
+      // background removal runs in parallel either way
       if (token === analyzeToken.current) setAnalyzeStep('classify')
-      const clipP = classifySubject(crop, 3).catch((): Prediction[] | null => null)
       const cutP = cutoutSubject(crop)
-      const clipCandidates = await clipP
+      const settings = loadSettings()
+      let cloudPrediction: Prediction | null = null
+      let clipCandidates: Prediction[] | null = null
+      if (settings.apiKey.trim()) {
+        const r = await recognizeCloud(crop, settings)
+        if (r) {
+          cloudPrediction = {
+            label: r.en.toLowerCase(),
+            word: r.en,
+            score: r.confidence,
+            translations: { en: r.en, zh: r.zh, ja: r.ja, ko: r.ko },
+          }
+        }
+      }
+      if (!cloudPrediction) {
+        clipCandidates = await classifySubject(crop, 3).catch((): Prediction[] | null => null)
+      }
       const tClip = performance.now()
       if (token === analyzeToken.current) setAnalyzeStep('cutout')
       const sticker = await cutP
@@ -166,6 +186,21 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
       console.debug(
         `[SnapWord] pipeline coco=${JSON.stringify(cocoCandidates.map((c) => [c.label, +c.score.toFixed(3)]))} clip=${JSON.stringify(clipCandidates ? clipCandidates.map((c) => [c.label, +c.score.toFixed(3)]) : null)} sticker=${!!sticker} detect=${Math.round(tDetect - t0)}ms clip=${Math.round(tClip - tDetect)}ms total=${Math.round(performance.now() - t0)}ms`,
       )
+
+      // cloud vision-LLM success → confident card straight away
+      if (cloudPrediction) {
+        return {
+          cropUrl: sticker ?? crop,
+          sticker: !!sticker,
+          candidates: [cloudPrediction],
+          picked: cloudPrediction,
+          uncertain: false,
+          modelError: false,
+          cloud: true,
+          word: cloudPrediction.word,
+          translation: cloudPrediction.translations[lang],
+        }
+      }
 
       // full degradation chain: CLIP → COCO-only → manual (modelError)
       let candidates: Prediction[]
@@ -194,6 +229,7 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
           picked: top,
           uncertain: false,
           modelError: false,
+          cloud: false,
           word: top.word,
           translation: top.translations[lang],
         }
@@ -206,6 +242,7 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
         picked: null,
         uncertain: true,
         modelError,
+        cloud: false,
         word: '',
         translation: '',
       }
@@ -513,6 +550,13 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
                   </button>
                 ))}
               </div>
+            )}
+
+            {/* cloud recognition badge */}
+            {result.cloud && (
+              <span className="mb-1 rounded-full bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-500">
+                ☁️✨ Cloud AI
+              </span>
             )}
 
             {/* word pill + pronunciation */}

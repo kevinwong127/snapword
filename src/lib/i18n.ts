@@ -74,6 +74,43 @@ const STRINGS = {
   editTranslation: { en: 'Translation', zh: '翻译', ja: '翻訳', ko: '번역' },
   save: { en: 'Save', zh: '保存', ja: '保存', ko: '저장' },
   holdToDelete: { en: 'Hold to delete', zh: '長按可刪除', ja: '長押しで削除', ko: '길게 눌러 삭제' },
+  settings: { en: 'Settings', zh: '設定', ja: '設定', ko: '설정' },
+  recognitionProvider: {
+    en: 'Recognition provider',
+    zh: '識別服務',
+    ja: '認識サービス',
+    ko: '인식 서비스',
+  },
+  providerZhipu: {
+    en: 'Zhipu GLM-4V-Flash (free, works in mainland China)',
+    zh: '智譜 GLM-4V-Flash（免費·內地可用）',
+    ja: 'Zhipu GLM-4V-Flash（無料・中国本土対応）',
+    ko: 'Zhipu GLM-4V-Flash (무료·중국 본토 사용 가능)',
+  },
+  providerQwen: {
+    en: 'Alibaba Qwen-VL (DashScope)',
+    zh: '阿里 Qwen-VL（DashScope）',
+    ja: 'Alibaba Qwen-VL (DashScope)',
+    ko: 'Alibaba Qwen-VL (DashScope)',
+  },
+  getKeyHint: {
+    en: 'Get a free API key at bigmodel.cn',
+    zh: '前往 bigmodel.cn 免費取得金鑰',
+    ja: 'bigmodel.cn で無料APIキーを取得',
+    ko: 'bigmodel.cn에서 무료 API 키 발급',
+  },
+  cloudOn: {
+    en: 'Cloud recognition enabled ✓',
+    zh: '已啟用雲端識別 ✓',
+    ja: 'クラウド認識が有効です ✓',
+    ko: '클라우드 인식 활성화됨 ✓',
+  },
+  cloudOff: {
+    en: 'No API key set — using on-device recognition',
+    zh: '未設定 API Key — 使用本地識別',
+    ja: 'APIキー未設定 — オンデバイス認識を使用',
+    ko: 'API 키 미설정 — 온디바이스 인식 사용',
+  },
 } as const
 
 export type StringKey = keyof typeof STRINGS

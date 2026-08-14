@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Check, Globe, Volume2, X } from 'lucide-react'
+import { Check, Globe, Settings2, Volume2, X } from 'lucide-react'
 import type { WordEntry } from '@/lib/store'
 import { LANGS, formatDateLabel, formatGroupHeader, t } from '@/lib/i18n'
 import type { Lang } from '@/lib/i18n'
 import { speak } from '@/lib/media'
 import { usePinyin } from '@/lib/pinyin'
+import { loadSettings, saveSettings } from '@/lib/settings'
+import type { ProviderId, Settings } from '@/lib/settings'
 
 interface Props {
   entries: WordEntry[]
@@ -94,8 +96,88 @@ function WordCard({
   )
 }
 
+function SettingsSheet({ lang, onClose }: { lang: Lang; onClose: () => void }) {
+  const [settings, setSettings] = useState<Settings>(() => loadSettings())
+  const [key, setKey] = useState(settings.apiKey)
+  const configured = settings.apiKey.trim().length > 0
+
+  const save = (next: Settings) => {
+    setSettings(next)
+    saveSettings(next)
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-end" role="dialog" aria-label={t(lang, 'settings')}>
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div
+        className="sw-card-in relative w-full rounded-t-[28px] bg-white px-6 pb-8 pt-6"
+        style={{ paddingBottom: 'calc(28px + env(safe-area-inset-bottom))' }}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-[17px] font-extrabold text-neutral-900">{t(lang, 'settings')}</h3>
+          <button
+            onClick={onClose}
+            aria-label="close settings"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-100 active:scale-90"
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-neutral-400">
+          {t(lang, 'recognitionProvider')}
+        </label>
+        <select
+          value={settings.provider}
+          onChange={(e) => save({ ...settings, provider: e.target.value as ProviderId })}
+          className="mb-4 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-[14px] font-semibold text-neutral-800 outline-none focus:border-violet-400"
+        >
+          <option value="zhipu">{t(lang, 'providerZhipu')}</option>
+          <option value="dashscope">{t(lang, 'providerQwen')}</option>
+        </select>
+
+        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-neutral-400">
+          API Key
+        </label>
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder="••••••••••••••••"
+          autoComplete="off"
+          className="mb-3 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-[14px] font-semibold text-neutral-800 outline-none focus:border-violet-400"
+        />
+        <button
+          onClick={() => save({ ...settings, apiKey: key.trim() })}
+          className="mb-3 w-full rounded-full bg-neutral-900 py-2.5 text-sm font-bold text-white active:scale-[0.98]"
+        >
+          {t(lang, 'save')}
+        </button>
+
+        <a
+          href="https://bigmodel.cn"
+          target="_blank"
+          rel="noreferrer"
+          className="mb-3 block text-center text-[12px] font-medium text-violet-500 underline underline-offset-4"
+        >
+          {t(lang, 'getKeyHint')} ↗
+        </a>
+
+        <p
+          className={`text-center text-[12px] font-semibold ${
+            configured ? 'text-emerald-600' : 'text-neutral-400'
+          }`}
+        >
+          {configured ? t(lang, 'cloudOn') : t(lang, 'cloudOff')}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function WordWall({ entries, lang, onLangChange, onDelete }: Props) {
   const [langOpen, setLangOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const groups = useMemo(() => {
     const map = new Map<string, WordEntry[]>()
@@ -134,7 +216,14 @@ export default function WordWall({ entries, lang, onLangChange, onDelete }: Prop
             {total} {t(lang, 'wordsUnit')}
           </p>
         </div>
-        <div className="relative">
+        <div className="relative flex items-center gap-1">
+          <button
+            aria-label="settings"
+            onClick={() => setSettingsOpen(true)}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 active:scale-90"
+          >
+            <Settings2 size={19} />
+          </button>
           <button
             aria-label="language"
             onClick={() => setLangOpen((v) => !v)}
@@ -194,6 +283,8 @@ export default function WordWall({ entries, lang, onLangChange, onDelete }: Prop
           </div>
         </section>
       ))}
+
+      {settingsOpen && <SettingsSheet lang={lang} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }
