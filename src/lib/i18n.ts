@@ -111,6 +111,12 @@ const STRINGS = {
     ja: 'APIキー未設定 — オンデバイス認識を使用',
     ko: 'API 키 미설정 — 온디바이스 인식 사용',
   },
+  cloudKeySaved: {
+    en: 'Cloud recognition enabled ✓',
+    zh: '雲端識別已啟用 ✓',
+    ja: 'クラウド認識が有効になりました ✓',
+    ko: '클라우드 인식이 활성화되었습니다 ✓',
+  },
 } as const
 
 export type StringKey = keyof typeof STRINGS
