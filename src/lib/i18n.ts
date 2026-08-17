@@ -24,6 +24,12 @@ const STRINGS = {
     ko: '사물을 프레임 안에 놓아주세요',
   },
   analyzing: { en: 'AI analyzing…', zh: 'AI 識別中…', ja: 'AI 解析中…', ko: 'AI 분석 중…' },
+  cloudRecognizing: {
+    en: 'Cloud recognizing…',
+    zh: '雲端識別中…',
+    ja: 'クラウド認識中…',
+    ko: '클라우드 인식 중…',
+  },
   removingBg: { en: 'Cutting out subject…', zh: '正在退地…', ja: '背景を除去中…', ko: '배경 제거 중…' },
   bigModelLoading: {
     en: 'Loading large AI model…',

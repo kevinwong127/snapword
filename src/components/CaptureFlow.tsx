@@ -12,6 +12,7 @@ import {
   cropCenter,
   cropDetection,
   downscaleFile,
+  downscaleImage,
   loadImageEl,
   speak,
 } from '@/lib/media'
@@ -73,9 +74,11 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
   const [editWord, setEditWord] = useState('')
   const [editTrans, setEditTrans] = useState('')
   const [uploadError, setUploadError] = useState(false)
-  /** analyzing sub-step: localization → CLIP classification → subject cutout */
-  const [analyzeStep, setAnalyzeStep] = useState<'detect' | 'classify' | 'cutout'>('detect')
+  /** analyzing sub-step: cloud fast path, or localization → CLIP → cutout */
+  const [analyzeStep, setAnalyzeStep] = useState<'cloud' | 'detect' | 'classify' | 'cutout'>('detect')
   const [clipReady, setClipReady] = useState(false)
+  // cloud key configured at mount → skip ALL local-model preloads and pills
+  const [cloudConfigured] = useState(() => loadSettings().apiKey.trim().length > 0)
 
   // auto-dismiss the upload error notice
   useEffect(() => {
@@ -115,8 +118,14 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
     }
   }, [])
 
-  // preload the AI models lazily in the background (module-level singletons)
+  // preload the AI models lazily in the background (module-level singletons).
+  // cloud key configured → no local models needed; they load on demand ONLY
+  // if a cloud call actually fails mid-snap.
   useEffect(() => {
+    if (cloudConfigured) {
+      setModelStatus('ready')
+      return
+    }
     let alive = true
     loadModel()
       .then(() => alive && setModelStatus('ready'))
@@ -127,12 +136,14 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [])
+  }, [cloudConfigured])
 
   const startAnalysis = (photoUrl: string) => {
     const token = ++analyzeToken.current
     setUploadError(false)
-    setAnalyzeStep('detect')
+    const settings = loadSettings()
+    const useCloud = settings.apiKey.trim().length > 0
+    setAnalyzeStep(useCloud ? 'cloud' : 'detect')
     setPhoto(photoUrl)
     setPhase('analyzing')
 
@@ -142,7 +153,45 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
       // may reject on undecodable data → handled by the outer .catch below
       const img = await loadImageEl(photoUrl)
 
-      // ── stage 1: localize subject with COCO-SSD (center-crop fallback) ──
+      // ── cloud-first fast path: full frame → vision-LLM. NO local model
+      // downloads on this path (no COCO-SSD, no CLIP). ──
+      if (useCloud) {
+        const cloudImage = downscaleImage(img, 768, 0.8) ?? photoUrl
+        const r = await recognizeCloud(cloudImage, settings)
+        if (r) {
+          if (token === analyzeToken.current) setAnalyzeStep('cutout')
+          // sticker: imgly lazy-loads on demand and finds the salient subject
+          // in the full frame itself; failure → plain photo tile as today
+          const sticker = await cutoutSubject(cloudImage).catch(() => null)
+          const cloudPrediction: Prediction = {
+            label: r.en.toLowerCase(),
+            word: r.en,
+            score: r.confidence,
+            translations: { en: r.en, zh: r.zh, ja: r.ja, ko: r.ko },
+          }
+          console.debug(
+            `[SnapWord] cloud fast path word=${r.en} conf=${r.confidence} sticker=${!!sticker} total=${Math.round(performance.now() - t0)}ms`,
+          )
+          return {
+            cropUrl: sticker ?? cloudImage,
+            sticker: !!sticker,
+            candidates: [cloudPrediction],
+            picked: cloudPrediction,
+            uncertain: false,
+            modelError: false,
+            cloud: true,
+            word: cloudPrediction.word,
+            translation: cloudPrediction.translations[lang],
+          }
+        }
+        // cloud failed (timeout/HTTP error/bad JSON/low confidence) →
+        // fall through to the local pipeline; only NOW do the local
+        // models start downloading.
+        console.debug('[SnapWord] cloud recognition failed, falling back to local pipeline')
+        if (token === analyzeToken.current) setAnalyzeStep('detect')
+      }
+
+      // ── local pipeline: COCO-SSD localization → crop → CLIP classify ──
       let cocoCandidates: Prediction[] = []
       let cocoFailed = false
       try {
@@ -157,28 +206,9 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
         cropCenter(img) ??
         photoUrl
 
-      // ── stage 2: recognition — cloud vision-LLM primary (when an API key
-      // is configured), local CLIP as the seamless fallback ──
-      // background removal runs in parallel either way
       if (token === analyzeToken.current) setAnalyzeStep('classify')
       const cutP = cutoutSubject(crop)
-      const settings = loadSettings()
-      let cloudPrediction: Prediction | null = null
-      let clipCandidates: Prediction[] | null = null
-      if (settings.apiKey.trim()) {
-        const r = await recognizeCloud(crop, settings)
-        if (r) {
-          cloudPrediction = {
-            label: r.en.toLowerCase(),
-            word: r.en,
-            score: r.confidence,
-            translations: { en: r.en, zh: r.zh, ja: r.ja, ko: r.ko },
-          }
-        }
-      }
-      if (!cloudPrediction) {
-        clipCandidates = await classifySubject(crop, 3).catch((): Prediction[] | null => null)
-      }
+      const clipCandidates = await classifySubject(crop, 3).catch((): Prediction[] | null => null)
       const tClip = performance.now()
       if (token === analyzeToken.current) setAnalyzeStep('cutout')
       const sticker = await cutP
@@ -186,21 +216,6 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
       console.debug(
         `[SnapWord] pipeline coco=${JSON.stringify(cocoCandidates.map((c) => [c.label, +c.score.toFixed(3)]))} clip=${JSON.stringify(clipCandidates ? clipCandidates.map((c) => [c.label, +c.score.toFixed(3)]) : null)} sticker=${!!sticker} detect=${Math.round(tDetect - t0)}ms clip=${Math.round(tClip - tDetect)}ms total=${Math.round(performance.now() - t0)}ms`,
       )
-
-      // cloud vision-LLM success → confident card straight away
-      if (cloudPrediction) {
-        return {
-          cropUrl: sticker ?? crop,
-          sticker: !!sticker,
-          candidates: [cloudPrediction],
-          picked: cloudPrediction,
-          uncertain: false,
-          modelError: false,
-          cloud: true,
-          word: cloudPrediction.word,
-          translation: cloudPrediction.translations[lang],
-        }
-      }
 
       // full degradation chain: CLIP → COCO-only → manual (modelError)
       let candidates: Prediction[]
@@ -391,13 +406,13 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
           >
             <p className="text-[17px] font-extrabold text-white">{today}</p>
             <p className="mt-0.5 text-[13px] font-medium text-white/80">{t(lang, 'frameHint')}</p>
-            {modelStatus === 'loading' && (
+            {modelStatus === 'loading' && !cloudConfigured && (
               <span className="mt-3 inline-flex items-center gap-2 rounded-full bg-black/40 px-3.5 py-1.5 text-[12px] font-semibold text-white/90 backdrop-blur">
                 <span className="sw-pulse-dot h-1.5 w-1.5 rounded-full bg-violet-300" />
                 {t(lang, 'modelLoading')}
               </span>
             )}
-            {modelStatus === 'error' && (
+            {modelStatus === 'error' && !cloudConfigured && (
               <span className="mt-3 inline-block rounded-full bg-black/40 px-3.5 py-1.5 text-[12px] font-semibold text-amber-200 backdrop-blur">
                 {t(lang, 'modelOffline')}
               </span>
@@ -467,13 +482,15 @@ export default function CaptureFlow({ lang, onSave, onClose }: Props) {
           ))}
           <div className="absolute inset-x-0 top-[46%] flex flex-col items-center">
             <p className="rounded-full bg-black/45 px-5 py-2 text-sm font-bold text-white backdrop-blur">
-              {analyzeStep === 'detect'
-                ? t(lang, 'analyzing')
-                : analyzeStep === 'classify'
-                  ? clipReady
-                    ? t(lang, 'classifying')
-                    : t(lang, 'bigModelLoading')
-                  : t(lang, 'removingBg')}
+              {analyzeStep === 'cloud'
+                ? t(lang, 'cloudRecognizing')
+                : analyzeStep === 'detect'
+                  ? t(lang, 'analyzing')
+                  : analyzeStep === 'classify'
+                    ? clipReady
+                      ? t(lang, 'classifying')
+                      : t(lang, 'bigModelLoading')
+                    : t(lang, 'removingBg')}
             </p>
           </div>
           <button

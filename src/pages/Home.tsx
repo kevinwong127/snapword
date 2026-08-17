@@ -8,7 +8,7 @@ import { LANGS } from '@/lib/i18n'
 import { t } from '@/lib/i18n'
 import { preloadPinyin } from '@/lib/pinyin'
 import { preloadClip } from '@/lib/clip'
-import { applySettingsFromUrl } from '@/lib/settings'
+import { applySettingsFromUrl, loadSettings } from '@/lib/settings'
 import type { Lang } from '@/lib/i18n'
 
 function initialLang(): Lang {
@@ -28,10 +28,14 @@ export default function Home() {
     if (applySettingsFromUrl()) setKeyToast(true)
     preloadPinyin()
     // idle preload: start the CLIP download in the background so the first
-    // snap is fast (weights are browser-cached afterwards)
-    const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
-    if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(() => preloadClip(), { timeout: 8000 })
-    else window.setTimeout(() => preloadClip(), 4000)
+    // snap is fast (weights are browser-cached afterwards). Skip entirely
+    // when a cloud key is configured — the cloud fast path never touches
+    // local models; they load on demand only if a cloud call fails.
+    if (!loadSettings().apiKey.trim()) {
+      const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
+      if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(() => preloadClip(), { timeout: 8000 })
+      else window.setTimeout(() => preloadClip(), 4000)
+    }
   }, [])
   useEffect(() => {
     if (!keyToast) return
